@@ -32,7 +32,7 @@ Follows the OAuth2 flow as documented here:
 """
 
 from functools import wraps
-import itertools
+import os
 import os.path
 import threading
 import time
@@ -44,11 +44,10 @@ import bottle
 import requests
 
 
-List_of_Dicts = Sequence[Dict]
-
-
 class OneDriver:
-    
+
+    environ_client_id = 'ONEDRIVER_CLIENT_ID'
+    environ_client_secret = 'ONEDRIVER_CLIENT_SECRET'
     graph_root = 'https://graph.microsoft.com/v1.0/me'
     files_root = f'{graph_root}/drive/root'
     item_endpoint = f'{graph_root}/drive/items'
@@ -59,14 +58,25 @@ class OneDriver:
     token_url = f'https://{auth_host}{token_endpoint}'    
             
     def __init__(self,
-        client_id,
-        client_secret,
+        client_id=None,
+        client_secret=None,
         scope = 'offline_access files.readwrite user.read',
         refresh_token_file='~/Documents/onedrive_refresh_token',
         quiet=True):
         self.quiet = quiet
         self.access_token = None
-        
+
+        client_id = client_id or os.environ.get(self.environ_client_id)
+        client_secret = client_secret or os.environ.get(
+            self.environ_client_secret)
+
+        if not (client_id and client_secret):
+            raise Exception(f'client_id and/or client_secret not provided - '
+                f'include as constructor parameters or set environment '
+                f'variables {self.environ_client_id} and '
+                f'{self.environ_client_secret}.'
+            )
+
         self.refresh_token_filename = os.path.expanduser(
             refresh_token_file+'_'+client_id)
         
@@ -128,13 +138,13 @@ class OneDriver:
             token_params = self.token_params.copy()
             token_params['code'] = code
             token_params['grant_type'] = 'authorization_code'
-            success, result = self.actual_token_request(token_params)
+            success, result = self._actual_token_request(token_params)
             if success:
                 return 'Authentication complete'
             else:
                 return result
         
-        server = OneDriver.AuthServer(port=8090)
+        server = OneDriver._AuthServer(port=8090)
         
         threading.Thread(
             group=None,
@@ -257,7 +267,7 @@ class OneDriver:
             to_folder_id = to_folder_id['id']
         return self.patch(f'{self.item_endpoint}/{item_id}', data={
             'parentReference': {
-                'id': to-folder-id
+                'id': to_folder_id
             },
         }).json()
         
@@ -268,9 +278,10 @@ class OneDriver:
     #docgen: Access folder contents
         
     @flexible_id
-    def get_children(self, item_id, order_by=None) -> List_of_Dicts:
+    def get_children(self, item_id, order_by=None):
         """
-        Returns a list of dicts describing the children of a folder or an album.
+        Returns a list of dicts describing the children of a folder or an
+        album.
         
         `item_id` can be either a item ID or a dict with an `id` item that is
         used instead.
@@ -283,7 +294,7 @@ class OneDriver:
         result = self.get(url).json()
         return result['value']
         
-    def get_folder(self, path='/', order_by=None) -> Tuple[List_of_Dicts, List_of_Dicts]:
+    def get_folder(self, path='/', order_by=None):
         """
         Returns the contents of the given path (default is your OneDive root)
         as a `([folders], [files])` tuple.
@@ -328,7 +339,8 @@ class OneDriver:
         if include_subfolders:
             while len(folders) > 0:
                 folder = folders.pop()
-                path = unquote(folder['parentReference']['path'][len('/drive/root:'):])
+                path = unquote(
+                    folder['parentReference']['path'][len('/drive/root:'):])
                 full_path = path + '/' + folder['name']
                 subfolders, more_files = self.get_folder(full_path)
                 if info_callback is not None:
@@ -337,7 +349,7 @@ class OneDriver:
                 files.extend(more_files)
         return files
         
-    def get_albums(self) -> List_of_Dicts:
+    def get_albums(self):
         """
         Returns a list of dicts describing your photo albums.
         
@@ -390,14 +402,16 @@ class OneDriver:
         
         
 if __name__ == '__main__':
+
+    client_id = None
+    client_secret = None
+    try:
+        import onedrive_ids
+        client_id = onedrive_ids.client_id
+        client_secret = onedrive_ids.client_secret
+    except ModuleNotFoundError: pass # Rely on environment variables
     
-    import onedrive_ids
-    import logging
-    
-    driver = OneDriver(
-        client_id=onedrive_ids.client_id,
-        client_secret=onedrive_ids.client_secret
-    )
+    driver = OneDriver(client_id=client_id, client_secret=client_secret)
     
     print('Root folder contents')
     print('--------------------')
